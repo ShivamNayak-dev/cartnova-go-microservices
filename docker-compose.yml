@@ -1,0 +1,223 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deployments/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongodb:
+    image: mongo:8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: bitnami/kafka:3.9
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_NUM_PARTITIONS: 3
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  kafka-init:
+    image: bitnami/kafka:3.9
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic order-events --partitions 3 --replication-factor 1 &&
+        kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory-events --partitions 3 --replication-factor 1
+
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: user-service
+    environment:
+      DATABASE_URL: postgres://postgres:root@postgres:5432/cartnova_user?sslmode=disable
+      HTTP_PORT: 8081
+      GRPC_PORT: 9091
+      MIGRATIONS_DIR: /app/migrations/user
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8081"
+      - "9091"
+
+  product-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: product-service
+    environment:
+      DATABASE_URL: postgres://postgres:root@postgres:5432/cartnova_product?sslmode=disable
+      REDIS_ADDR: redis:6379
+      HTTP_PORT: 8082
+      GRPC_PORT: 9092
+      MIGRATIONS_DIR: /app/migrations/product
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8082"
+      - "9092"
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: order-service
+    environment:
+      DATABASE_URL: postgres://postgres:root@postgres:5432/cartnova_order?sslmode=disable
+      PRODUCT_GRPC_ADDR: product-service:9092
+      USER_GRPC_ADDR: user-service:9091
+      KAFKA_BROKERS: kafka:9092
+      HTTP_PORT: 8083
+      MIGRATIONS_DIR: /app/migrations/order
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      user-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+    expose:
+      - "8083"
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: inventory-service
+    environment:
+      DATABASE_URL: postgres://postgres:root@postgres:5432/cartnova_inventory?sslmode=disable
+      KAFKA_BROKERS: kafka:9092
+      HTTP_PORT: 8084
+      MIGRATIONS_DIR: /app/migrations/inventory
+      WORKER_COUNT: 3
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    expose:
+      - "8084"
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: notification-service
+    environment:
+      MONGODB_URL: mongodb://root:root@mongodb:27017/?authSource=admin
+      MONGODB_DATABASE: cartnova_notification
+      KAFKA_BROKERS: kafka:9092
+      HTTP_PORT: 8085
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    expose:
+      - "8085"
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: gateway
+    environment:
+      HTTP_PORT: 8080
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      USER_SERVICE_URL: http://user-service:8081
+      PRODUCT_SERVICE_URL: http://product-service:8082
+      ORDER_SERVICE_URL: http://order-service:8083
+      INVENTORY_SERVICE_URL: http://inventory-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8085
+    ports:
+      - "8080:8080"
+    depends_on:
+      user-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  mongo_data:
+  kafka_data:
