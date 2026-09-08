@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package cartnova.product;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/ShivamNayak-dev/cartnova/internal/grpcapi";
+
+service ProductService {
+  rpc GetProduct(google.protobuf.Struct) returns (google.protobuf.Struct);
+}
