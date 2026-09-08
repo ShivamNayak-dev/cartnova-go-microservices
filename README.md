@@ -366,26 +366,8 @@ password: password
 
 ---
 
-## 🗺️ Suggested Reverse-Engineering Path
 
-If you're studying this repo rather than just running it, read it in this order — jumping straight to Docker Compose first will make less sense than seeing the application flow build up to it:
 
-1. Read `docs/architecture.md` for the big picture.
-2. Start with **User Service** — trace `handler → service → repository → database`.
-3. Trace a Product request, then its Redis cache behavior.
-4. Trace Order Service and its gRPC clients.
-5. Follow `OrderCreated` into Kafka.
-6. Trace Inventory's concurrent event processing.
-7. Inspect the PostgreSQL transaction and the `FOR UPDATE` lock.
-8. Trace Inventory's result event back to Order Service.
-9. Trace Notification Service and its MongoDB writes.
-10. Trace WebSocket delivery to the client.
-11. Study `examples/concurrency` in isolation.
-12. Run `go test -race ./...`.
-13. Intentionally break one component and observe the failure path.
-14. Read `docker-compose.yml` last — it'll make far more sense once you understand the application it's wiring together.
-
----
 
 ## 🎯 Design Principle
 
