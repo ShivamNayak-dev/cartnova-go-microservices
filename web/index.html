@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CartNova Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="container">
+        <h1>CartNova</h1>
+        <p>Small browser client for reverse-engineering the backend.</p>
+
+        <section>
+            <h2>Login</h2>
+            <input id="email" value="admin@cartnova.local" placeholder="Email">
+            <input id="password" type="password" value="password" placeholder="Password">
+            <button onclick="login()">Login</button>
+            <pre id="loginResult"></pre>
+        </section>
+
+        <section>
+            <h2>Products</h2>
+            <button onclick="loadProducts()">Load products</button>
+            <pre id="products"></pre>
+        </section>
+
+        <section>
+            <h2>Notifications</h2>
+            <button onclick="connectNotifications()">Connect WebSocket</button>
+            <pre id="notifications"></pre>
+        </section>
+    </main>
+    <script src="app.js"></script>
+</body>
+</html>
